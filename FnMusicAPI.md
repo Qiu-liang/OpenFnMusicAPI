@@ -606,7 +606,7 @@ coverId包含前缀，已知有 `album_`、`artist_`、`track_`、`playlist_`；
 
 ### 上传与关联（H/F）
 
-使用原生FormData时让客户端生成Content-Type及boundary，**不能JSON.stringify(FormData)**。历史参考客户端存在此问题，见README的限制说明。
+使用原生FormData时让客户端生成Content-Type及boundary，**不能JSON.stringify(FormData)**。历史参考客户端存在此问题，见第 20.3 节「实现边界」。
 
 歌单封面上传返回coverId后，用playlist/edit携带guid、name、coverId关联；曲目封面关联需要管理员track/metadata。历史无file返回100002；曲目封面普通成员返回100003。
 
