@@ -2,8 +2,7 @@
 
 飞牛音乐（FnMusic）Web 端 HTTP API 的非官方逆向文档与只读验证工具。
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Node.js](https://img.shields.io/badge/Node.js-24%2B-339933?logo=nodedotjs&logoColor=white)](#运行只读验证)
+本仓库收录可公开阅读的全部资料：项目说明、脱敏后的 API 文档与只读验证脚本。文档与脚本自包含，不依赖仓库外的文件。
 
 > **非官方项目。** 本项目与飞牛（FnMusic）官方无关联，不提供官方兼容性承诺。文档整理自公开 Web 前端、历史探测记录与对**已授权实例**的只读复核；它不是完整 SDK 规范，也不证明已覆盖服务端全部路由或所有成功分支。
 >
