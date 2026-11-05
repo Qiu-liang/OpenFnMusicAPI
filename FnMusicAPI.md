@@ -174,7 +174,7 @@ Content-Type: application/json
 
 - 所测登录响应没有通过 `Set-Cookie` 下发令牌；客户端需从 JSON 取出 token，并在后续请求发送 Cookie。不要假定其它版本或 SSO 流程一定相同。
 - Web 前端用 `Path=/; SameSite=Strict` 写 `music-token`。Node.js 的原生 fetch 不会替你把 JSON 中的 token 转成 Cookie。
-- `deviceId` 的前端生成方式为 UUID 去连字符，或随机 16 字节的 hex。其前端存储键为 `music-device__id`，登录态可能追加 `:<serverGUID>:<userGUID>`。
+- `deviceId` 由客户端生成并持久化，建议为稳定的 32 位十六进制随机值。
 - 历史记录：缺 deviceId 返回100001；任意非空字符串样本曾被接受。仍建议生成稳定的32位hex，不依赖宽松校验。
 - 错误密码可能返回 HTTP 200 / 120001，也可能出现短期登录拒绝。**失败次数阈值和恢复时间不是稳定契约**；不要以故意错密方式在现用账号验证限流。
 - 密码请求格式的成功验证**不能证明服务端采用何种存储或比对算法**，本文不再推断“原样存储”。
@@ -615,23 +615,23 @@ coverId包含前缀，已知有 `album_`、`artist_`、`track_`、`playlist_`；
 <a id="libraries"></a>
 ## 14. 共享音乐库
 
-| 接口 | 权限 | query / body | data / 已知行为 | 证据 |
+| 接口 | 权限/用途 | query | data / 已知行为 | 证据 |
 |---|---|---|---|---|
 | `GET /shared-library/list` | 成员 | 无 | `{list:SharedLibrary[]}` | V |
 | `GET /shared-library/detail` | 成员 | `guid!` | `SharedLibrary` | V |
-| `POST /shared-library/create` | 管理员用途 | `{path,autoDownloadLyric,metadataPreference}` | 成功模型待确认 | H·拒绝 / F |
-| `POST /shared-library/edit` | 管理员用途 | `{guid,path,autoDownloadLyric,metadataPreference}` | 成功模型待确认 | H·参数错误 / F |
-| `POST /shared-library/delete` | 管理员用途；删除库 | `{guid}` | 成功模型待确认 | H·拒绝 |
-| `POST /shared-library/scan` | 管理员用途；扫描 | `{guid}` | 成功模型待确认 | H·拒绝 |
-| `POST /shared-library/scan-all` | 管理员用途；扫描全部 | 前端无body | 成功模型待确认 | H·拒绝 / F |
-| `POST /shared-library/reconnect/check` | 管理员用途 | `{guid,path}` | 成功模型待确认 | H·拒绝 / F |
-| `POST /shared-library/reconnect` | 管理员用途；重连 | `{guid,path}` | 成功模型待确认 | H·拒绝 / F |
+| `POST /shared-library/create` | 管理员用途；新建库 | — | 成功模型与请求字段形态待确认 | H·拒绝 / F |
+| `POST /shared-library/edit` | 管理员用途；编辑库 | — | 成功模型与请求字段形态待确认 | H·参数错误 / F |
+| `POST /shared-library/delete` | 管理员用途；删除库 | — | 成功模型待确认 | H·拒绝 |
+| `POST /shared-library/scan` | 管理员用途；扫描 | — | 成功模型待确认 | H·拒绝 |
+| `POST /shared-library/scan-all` | 管理员用途；扫描全部 | — | 成功模型待确认 | H·拒绝 / F |
+| `POST /shared-library/reconnect/check` | 管理员用途 | — | 成功模型待确认 | H·拒绝 / F |
+| `POST /shared-library/reconnect` | 管理员用途；重连 | — | 成功模型待确认 | H·拒绝 / F |
 
 - detail缺guid为100002，不存在为100005；读取成功不代表成员可维护库。
-- 前端create/edit形态里没有name，而读取模型可以含name（可能为空）。不要用“修改name”替代实际请求。
-- metadataPreference候选：`local_preferred`、`cloud_preferred`、`local_only`；autoDownloadLyric为布尔开关。完整必填规则未从管理员成功分支确认。
+- 前端create/edit请求不含name字段；读取模型可以含name（可能为空）。不要用“修改name”替代实际请求。
 - 历史create空body或仅name返回100001，含path后出现100003；delete/scan缺guid曾返回100001，带guid为100003。
-- reconnect/check与reconnect历史只有guid时100001，同时guid+path时100003。此观察支持正确调用形态，**不能推导整个服务端的校验执行顺序**。
+- reconnect/check与reconnect历史只有guid时100001，同时guid+path时100003。此观察**不能推导整个服务端的校验执行顺序**。
+- **请求字段形态刻意不收录**：这些管理写操作从未在管理员身份下验证成功，字段清单只会降低对未验证实例滥用的门槛，而不构成已证实的接口契约。
 - reconnect不是因为参数错误就“未实现”；也不要用真实库做重连/扫描/删除探测。
 
 <a id="folder-view"></a>
@@ -681,20 +681,19 @@ coverId包含前缀，已知有 `album_`、`artist_`、`track_`、`playlist_`；
 
 ### 16.1 用户管理与改密
 
-| 接口 | 权限/用途 | query / body | data / 已知行为 | 证据 |
-|---|---|---|---|---|
-| `GET /user/list` | 管理员用途 | 完整查询规则待确认 | 成员100003；成功模型待确认 | E |
-| `GET /user/exists` | 管理员用途 | 前端使用username | 成员100003，成功模型/参数有效性未测 | E / F |
-| `POST /user/create` | 前端管理员功能 | `{username,password,sharedLibraryAccess}` | 历史样本100001，成功模型待确认 | F / H·参数错误 |
-| `POST /user/edit` | 前端管理员功能 | `{guid,username,password?,sharedLibraryAccess}` | 历史样本100001，成功模型待确认 | F / H·参数错误 |
-| `POST /user/delete` | 管理员用途；删除用户 | `{guid}` | 历史成员100003 | H·拒绝 |
-| `POST /user/unbanned` | 管理员用途；解除禁用 | `{guid}` | 历史成员100003 | H·拒绝 |
-| `POST /user/passwd-change` | 当前用户改密 | `{password:"<sha256小写hex>"}` | 历史成功；完整data待确认 | H；本次未执行 |
+| 接口 | 权限/用途 | 已知行为 | 证据 |
+|---|---|---|---|
+| `GET /user/list` | 管理员用途 | 成员100003；完整查询规则与成功模型待确认 | E |
+| `GET /user/exists` | 管理员用途 | 成员100003，参数形态按前端username；成功模型未测 | E / F |
+| `POST /user/create` | 前端管理员功能；创建用户 | 历史样本100001；请求字段形态与成功模型待确认 | F / H·参数错误 |
+| `POST /user/edit` | 前端管理员功能；编辑用户 | 历史样本100001；请求字段形态与成功模型待确认 | F / H·参数错误 |
+| `POST /user/delete` | 管理员用途；删除用户 | 历史成员100003 | H·拒绝 |
+| `POST /user/unbanned` | 管理员用途；解除禁用 | 历史成员100003 | H·拒绝 |
+| `POST /user/passwd-change` | 当前用户改密 | 登录/改密遵循SHA-256格式；历史成功，完整data待确认 | H；本次未执行 |
 
 - user/exists建议遵循前端username参数；成员无论是否传参都可能被拒，不能用100003证明参数正确。
 - user/create/edit的100001不是明确权限拒绝，不能宣称“任何body均失败”或成功请求所需字段已完备。
-- 登录/改密遵循SHA-256格式；管理员create/edit的密码处理仍需结合其前端调用与隔离实例成功验证，不应把未知字符串直接作为明文发送。
-- sharedLibraryAccess形态见模型章节，不能因为请求里有该字段就假定User响应也含该字段。
+- **user/create/edit的请求字段形态刻意不收录**：管理员身份从未验证成功，字段清单只会降低对未授权实例滥用的门槛。sharedLibraryAccess的形态可见模型章节中前端请求体形态的记录，仅作结构参考，不代表可用契约。
 - passwd-change作用于当前会话用户；历史即使附加guid也未改变目标用户。不要用它管理员式地修改他人密码。
 - 历史缺/空password为100001，纯空白字符串为120006。**不要重跑空值/错密/同值改密来“证明安全”**，这仍是敏感写操作或认证探测。
 
@@ -711,13 +710,13 @@ coverId包含前缀，已知有 `album_`、`artist_`、`track_`、`playlist_`；
 
 ### 16.3 授权目录
 
-| 接口 | query / body | data / 权限 | 证据 |
-|---|---|---|---|
-| `GET /app-center/authed-dir/list` | 无已确认必填参数 | 成员100003；成功模型待确认 | E |
-| `GET /app-center/authed-dir/sub/list` | `parent!`：非空父目录参数 | 缺parent为100002；提供后成员100003 | E |
-| `POST /app-center/authed-dir/sub/create` | `{parent,name}` | 历史成员100003；成功模型待确认 | H·拒绝；参数来自历史探测 |
+| 接口 | 权限/已知行为 | 证据 |
+|---|---|---|
+| `GET /app-center/authed-dir/list` | 成员100003；成功模型待确认 | E |
+| `GET /app-center/authed-dir/sub/list` | 缺parent为100002；提供后成员100003 | E |
+| `POST /app-center/authed-dir/sub/create` | 历史成员100003；请求字段形态与成功模型待确认 | H·拒绝 |
 
-parent/name不应替换为guid/path等猜测字段。目录创建是写入操作；子目录成功列表结构、路径规范化、越界访问限制均未完成验证。
+parent/name不应替换为guid/path等猜测字段。目录创建是写入操作；**其请求字段形态刻意不收录**（管理员成功分支从未验证）。子目录成功列表结构、路径规范化、越界访问限制均未完成验证。
 
 <a id="tasks"></a>
 ## 17. 任务
@@ -875,49 +874,36 @@ SysInfo = {
 
 前端统一 fetch 客户端通过 HTTP **header** `authx` 发送签名（不是 query 参数）；媒体直接 URL、图片以及 sendBeacon 等通路不一定发送。一次授权复核中的只读请求、登录和退出不带该 header 仍成功，携带伪造值的只读样本也成功。**不能由此保证所有路由、请求类型或未来版本都不校验，也不能证明服务端读取了伪造值。**
 
-以下是前端逆向得到的算法说明（F），不是经过全量签名向量验证的独立SDK。服务端宽松接受不能作为签名实现正确的证明。
+以下是前端逆向得到的签名要素说明（F），不是经过全量签名向量验证的独立SDK，也不构成可复现算法。服务端宽松接受不能作为签名实现正确的证明。
 
-### 20.2 构造过程
+### 20.2 构成要素（描述性，非可复现模板）
 
-```text
-nonce     = 100000..999999 的随机6位十进制字符串
-timestamp = 当前毫秒时间戳字符串
-pathname  = 最终URL的pathname，包含/music/api/v1前缀，不含query
+本文只说明签名的**存在与构成要素**，不提供可复现的构造配方。以下为授权实例前端构建中观察到的要素，非完整算法描述：
 
-GET:
-  从最终URL.searchParams取得查询参数（此时值已经是字符串）
-  丢弃值恰为字符串 "undefined" 或 "null" 的项；保留空字符串
-  按key字典序规范化并用URLSearchParams编码拼接
-  将结果中的 "+" 改为 "%20"
-  对裸 % 做 replace(/%(?![0-9A-Fa-f]{2})/g, "%25")
-  尝试decodeURIComponent；失败则回退到未解码的规范化原文
-  bodyHash = md5(上述payload)
-
-POST JSON:
-  bodyHash = md5(JSON.stringify(body))
-  无body时使用 md5("")
-
-sign = md5(SALT + "_" + pathname + "_" + nonce + "_" + timestamp
-           + "_" + bodyHash + "_" + API_KEY)
-authx = "nonce=" + nonce + "&timestamp=" + timestamp + "&sign=" + sign
-```
-
-前端构建中可找到两个公开常量，本文**不复制其字面量**：
+| 要素 | 说明 |
+|---|---|
+| 随机数 | 一次请求使用一个随机数值，避免重放 |
+| 时间戳 | 毫秒级 |
+| pathname | 最终 URL 的 pathname，含 `/music/api/v1` 前缀，不含 query |
+| bodyHash | GET 与无 body POST 的 hash 输入来自 URL 查询串，POST JSON 来自序列化后的 body 字符串；两者编码与规范化规则不共享 |
+| 常量 | 前端构建中可读取两个公开常量，本文不复制其字面量 |
+| 传输形态 | HTTP header `authx`，取值为形如 `nonce=…&timestamp=…&sign=…` 的键值串 |
 
 ```text
 SALT    = <从授权实例的前端构建读取>
 API_KEY = <从授权实例的前端构建读取>
 ```
 
-客户端可见的常量不是用户令牌，也不能提供「客户端持有秘密」的安全保证。若目标版本需要签名，应从自己获授权实例的前端构建中读取并与该版本一起做兼容性验证；不要将某一构建的值当成跨版本凭据或写入公开 SDK。
+签名值为上述要素经哈希函数组合计算的结果，非明文拼接。客户端可见的常量不是用户令牌，也不能提供「客户端持有秘密」的安全保证。
+
+**为何不提供完整模板：** 从任意实例的公开前端构建中提取两个常量后，一段精确到拼接顺序与编码边界规则的完整算法描述将直接构成对未授权实例的签名伪造能力。因此本文停在要素级描述。若目标版本需要签名，应从自己获授权实例的前端构建中读取常量并自行推导完整规则，与该版本一起做兼容性验证；不要将某一构建的值当成跨版本凭据或写入公开 SDK。
 
 ### 20.3 实现边界
 
-- 必须以**最终URL**为准；内联`?a=b`也应参与query规范化，不可混入pathname。
-- URLSearchParams的值均为字符串；JavaScript对象真正的null/undefined如何转换，应在URL构造层明确决定，不能把两层规则混写。
-- 重复key、特殊Unicode、数组序列化及multipart签名的完整等价规则尚未在本文提供独立测试向量，不宜直接猜测。
-- JSON签名应与实际发送的序列化字节一致；避免签名一次、发送时再用不同规则重新序列化。
-- multipart必须原样发送FormData，不能照抄JSON bodyHash规则后宣称兼容。
+- 必须以**最终URL**为准；query 与 pathname 的划分应与实际发送的请求一致，不可混入。
+- 请求序列化与签名计算所用字节应保持一致，避免签名一次、发送时再用不同规则重新序列化。
+- 重复key、特殊Unicode、数组序列化及multipart的完整等价规则尚未在本文提供独立测试向量，不宜直接猜测。
+- multipart发送规则与JSON请求不同；应按实际发送的FormData原样处理，不照抄其它通路规则。
 - 早期参考客户端的最终URL/参数过滤和FormData发送存在缺陷，**不作为推荐SDK**。实现时应以实际发送的最终 URL、序列化字节和 FormData 为准，不照抄历史封装。
 
 <a id="examples"></a>
@@ -1019,4 +1005,4 @@ NODE
 | 授权实例的一次只读复核 | 成功/错误/权限/会话分支的验证；详细证据不随本文发布 |
 | 历史观察 | 仅用于标 H/F 的未复现线索，不优先于本文的明确限定 |
 
-本文不附带请求级证据、账号、实例地址、前端常量字面量或私有脚本。历史脚本可能包含凭据、Cookie 持久化和不可完整回滚的操作；示例脱敏**不代表任何本地目录已经完成脱敏**。共享项目之前应单独审计文件、临时产物与版本历史。
+本文不附带请求级证据、账号、实例地址、前端常量字面量或私有脚本；签名算法以要素级描述为限（见第 20 章），未验证成功的管理类写接口不收录请求字段形态（见 14、16 章）。历史脚本可能包含凭据、Cookie 持久化和不可完整回滚的操作；示例脱敏**不代表任何本地目录已经完成脱敏**。共享项目之前应单独审计文件、临时产物与版本历史。
