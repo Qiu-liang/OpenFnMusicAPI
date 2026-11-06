@@ -1,10 +1,10 @@
 # 只读验证记录
 
-> 本文件记录对**已授权测试实例**的只读复核结果，是历史证据摘要。结果明细由脚本在本地生成，不纳入版本库。
+> 本文件记录对**已授权测试实例**的复核结果，是历史证据摘要。结果明细由脚本在本地生成，不纳入版本库。
 >
 > 验证结论是时点记录，不代表跨版本兼容性承诺。接口定义与证据标签见 [`FnMusicAPI.md`](FnMusicAPI.md)，复现方法见 [`tools/verify-readonly.mjs`](tools/verify-readonly.mjs) 文件头部的用法说明。
 
-验证对象为用户在会话中提供并明确授权的测试实例；地址、账号与密码**不写入仓库文件**。脚本只从环境变量读取，令牌仅保留在内存中，结束后主动登出。
+验证对象为用户在会话中提供并明确授权的测试实例；地址、账号与密码**不写入仓库文件**。脚本只从环境变量读取，令牌仅保留在内存中，结束后主动登出。前两轮为只读复核（第 1–4 节），后续一轮为管理面与写生命周期复核（第 5 节）。
 
 ## 1. 环境与范围
 
@@ -51,8 +51,19 @@
 
 复测明细由脚本在本地产出，同样不纳入版本库。新增接口族已写入 [`FnMusicAPI.md` 第 15 章「文件夹视图」](FnMusicAPI.md#folder-view)。
 
-## 5. 仍未完整验证
+## 5. 管理面与写生命周期复核
 
-管理员成功分支、跨账号资源隔离、用户禁用/授权分支，写入生命周期、上传持久化、媒体库维护、真实任务控制，OAuth 与首次初始化成功流程，以及会话级转码、HLS 回收与漫游等，仍未取得完整实测证据。完整清单见 [`FnMusicAPI.md` 第 22 章](FnMusicAPI.md#limits)。
+后续一轮授权复核在同版本另一实例上进行，除只读套件外，首次取得管理面与写操作的成功分支实测证据。写操作仅作用于该轮新建的**临时实体**（临时成员账号、临时歌单、临时收藏/播放历史记录、一次性转码会话与全新 deviceId 漫游），结束时全部删除/还原并复查无残留。
+
+- **接口面**：从前端构建提取的注册表与文档整理面一致，无新增/缺失接口。
+- **管理面读取**：`user/list`、`user/exists`、`settings/server`、`settings/user`、`app-center/authed-dir/list` 与 `sub/list` 均取得成功响应；User 模型补齐 `sharedLibraryAccess`（响应形态 `{mode,sharedLibraries[]}`）、`trimNasUserId`、`trimNasUsername`、`isBanned`、`bannedUntil`。
+- **用户管理**：`user/create`（密码 SHA-256，成功响应 `data:null`，重名 120004）、`user/edit`、`user/unbanned`、`user/delete` 全链路实测，删除后复查无残留。
+- **成员写生命周期**：歌单创建/改名/加歌/移歌/删除（detail 复查 100005）、`folder-view/add-to-playlist`、收藏添加/取消（`isFavorite` 读回一致）、播放历史上报与删除、歌词偏移修改与还原、转码会话（建立→播放列表→心跳→退出）、随机漫游三端点（队首 `roam-previous` 返回 `data:null`）。
+- **authx**：按文档第 20 章算法构造的合法签名在全部写请求与 GET 上被接受；前端签名常量仍不随仓库公开。
+- **`user/exists` 细节**：`username` 可选，缺参返回 code 0 / `{isExist:false}`。
+
+## 6. 仍未完整验证
+
+管理员/成员写接口中仍需专用环境或另获授权的部分：`settings/*` 更新、`shared-library` 写操作/扫描/重连、`track/metadata` 写、封面上传、`artist/genre create`、`search/index/rebuild`、`folder-view delete/recover`（真实数据）、`user/passwd-change`、`initialization/*`、`user/auth-login`。跨账号资源隔离、用户禁用/授权分支（`isBanned`/`bannedUntil` 非空样本）、OAuth 成功流程、CUE 分轨与错误密码限流行为仍未验证。完整清单见 [`FnMusicAPI.md` 第 22 章](FnMusicAPI.md#limits)。
 
 所测实例的库规模与命中数只是测试背景，不是接口上限或兼容性基线；有限成功样本不能证明所有字段必填、所有非法值被拒或所有数据集的分页行为。

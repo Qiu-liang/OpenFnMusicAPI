@@ -1,6 +1,6 @@
 # OpenFnMusicAPI — 飞牛音乐 HTTP API 接口文档
 
-> 非官方逆向文档，整理自公开 Web 前端与对已授权实例的一次只读复核。本文是接口说明，不是官方兼容性承诺，也不是覆盖所有成功分支的 SDK 规范。
+> 非官方逆向文档，整理自公开 Web 前端与对已授权实例的多次授权复核（含管理面与临时实体写生命周期）。本文是接口说明，不是官方兼容性承诺，也不是覆盖所有成功分支的 SDK 规范。
 
 - 版本、能力开关与实例信息请以 `GET /sys/config` 的实际回显为准，不要把某一构建的版本号或字段集合硬编码为通用契约。
 - 本文自包含，不引用任何仓库外证据文件、报告或历史客户端。
@@ -39,7 +39,7 @@
 
 公开前端代码中可整理出一组请求封装与 3 个直接资源 GET（封面、音频流、HLS 播放列表）；另有已知但不在前端注册表中的 `GET /sys/info` 与 `GET /task/detail`。本文按接口族组织说明，HLS 的初始化文件、分片等按资源 URL 家族描述，不逐文件计数。
 
-**这不是服务端全部路由清单的证明。** 一次授权只读复核覆盖了主要列表、详情、搜索、封面、歌词、分页排序、错误分支、成员权限拒绝与会话失效；多个成功分支、管理端写入和有状态会话仍未完整验证。样本不足的分页比较只作有限观察，不应算作分页能力证明。
+**这不是服务端全部路由清单的证明。** 授权复核覆盖了主要列表、详情、搜索、封面、歌词、分页排序、错误分支、成员权限拒绝与会话失效；管理面读取、用户管理与成员写生命周期（临时实体、已清理）也已实测。样本不足的分页比较只作有限观察，不应算作分页能力证明。
 
 ### 1.2 证据标签
 
@@ -47,13 +47,13 @@
 
 | 标签 | 含义 |
 |---|---|
-| **V** | 授权只读复核取得成功响应；可能只是空列表。具体限制在该行或随后说明 |
-| **E** | 只读复核只取得权限拒绝、参数错误或资源不存在响应；成功分支未验证 |
+| **V** | 授权复核取得成功响应；可能只是空列表。具体限制在该行或随后说明 |
+| **E** | 复核只取得权限拒绝、参数错误或资源不存在响应；成功分支未验证 |
 | **H** | 历史观察有请求/行为记录，本次复核未执行；“H·拒绝”仅有拒绝证据 |
 | **F** | 前端定义或调用参数提供的线索；成功分支没有可靠实测证据 |
 | **待确认** | 参数、模型或行为尚不能确定，不应补猜为事实 |
 
-- **V/E 是本次只读复核状态；H/F 不是“本次已测”。** 历史字段和边界会在正文显式说明；任何标签都不是跨版本兼容承诺。
+- **V/E 是授权复核状态；H/F 不是“本次已测”。** 历史字段和边界会在正文显式说明；任何标签都不是跨版本兼容承诺。
 - 表中 `data` 均指 JSON 信封内的 `data`，不是完整 HTTP 响应。
 - `guid!` 表示已知调用方式中要求提供；`?` 表示可选或条件字段。F 级请求中的必填性仍需管理员/专用场景验证。
 - “成员”指已登录且具备相应资源权限的普通用户；“管理员”若仅有 member→100003 证据，不代表管理员成功行为已验证。
@@ -174,10 +174,11 @@ Content-Type: application/json
 
 - 所测登录响应没有通过 `Set-Cookie` 下发令牌；客户端需从 JSON 取出 token，并在后续请求发送 Cookie。不要假定其它版本或 SSO 流程一定相同。
 - Web 前端用 `Path=/; SameSite=Strict` 写 `music-token`。Node.js 的原生 fetch 不会替你把 JSON 中的 token 转成 Cookie。
-- `deviceId` 由客户端生成并持久化，建议为稳定的 32 位十六进制随机值。
+- `deviceId` 的前端生成方式为 UUID 去连字符，或随机 16 字节的 hex。其前端存储键为 `music-device__id`，登录态可能追加 `:<serverGUID>:<userGUID>`。
 - 历史记录：缺 deviceId 返回100001；任意非空字符串样本曾被接受。仍建议生成稳定的32位hex，不依赖宽松校验。
 - 错误密码可能返回 HTTP 200 / 120001，也可能出现短期登录拒绝。**失败次数阈值和恢复时间不是稳定契约**；不要以故意错密方式在现用账号验证限流。
 - 密码请求格式的成功验证**不能证明服务端采用何种存储或比对算法**，本文不再推断“原样存储”。
+- `user/create` 与 `user/edit` 的密码契约经前端构建与实测确认为同一 SHA-256 小写 hex；create/edit 成功响应 `data:null`。
 
 ### 3.3 会话处理
 
@@ -296,10 +297,10 @@ metadata 缺 guid →100002，格式非法 →100002，格式正确但不存在 
 | 接口 | 权限/副作用 | 请求 | 返回 | 证据 |
 |---|---|---|---|---|
 | `GET /track/stream` | 成员，读取媒体 | `guid!`；可加 Range 头 | 原文件字节流或JSON错误 | V；FLAC/MP3各一个Range样本 |
-| `POST /track/transcode` | 成员用途；建立转码会话 | `{guid,output:{codec,bitrate,channel,start}}` | `{status,errno,errmsg,hlsTime,url}` | H / F |
-| `GET /track/hls/:guid/preset.m3u8` | 成员用途；依赖会话 | 路径参数 guid | HLS播放列表 | H |
-| `POST /track/transcode/heartbeat` | 保活会话 | `{guid,timestamp}` | `{status,errno,errmsg}` | H / F |
-| `POST /track/transcode/quit` | 退出会话 | `{guid}` | `{status,errno,errmsg}` | H |
+| `POST /track/transcode` | 成员用途；建立转码会话 | `{guid,output:{codec,bitrate,channel,start}}` | `{status,errno,errmsg,hlsTime,url}` | V（flac/320/2ch/start 0 一次成功） |
+| `GET /track/hls/:guid/preset.m3u8` | 成员用途；依赖会话 | 路径参数 guid | HLS播放列表 | V（会话内实测） |
+| `POST /track/transcode/heartbeat` | 保活会话 | `{guid,timestamp}` | `{status,errno,errmsg}` | V（会话内一次） |
+| `POST /track/transcode/quit` | 退出会话 | `{guid}` | `{status,errno,errmsg}` | V（quit 返回 success） |
 
 ### 6.2 直连与 Range
 
@@ -343,6 +344,7 @@ Range: bytes=0-99
 - `start:0` 为已知示例；非零 start 的单位、定位精度及输出行为**待确认**。
 - 历史其它codec/bitrate样本返回code0，**不能据此宣称服务端不校验或生成的输出一定可播**。
 - 前端/历史使用 success/ready 判断可用状态；完整状态机、等待轮询策略及并发会话隔离未完整验证。必须检查 data.status，而不是仅检查code。
+- 一次会话级实测：flac/320/channel 2/start 0 一次成功，`status=success`、`hlsTime=2`；播放列表返回 `application/vnd.apple.mpegurl`；心跳与退出均 `status=success`。
 
 ### 6.4 HLS 资源与生命周期（H）
 
@@ -397,7 +399,7 @@ Range: bytes=0-99
 
 - 参数是 **trackGUID**。误写 trackGuid 在所测样本返回100002；其它错误拼写亦不应使用。
 - content 可包含标准LRC及逐行JSON元信息。历史JSON片段含 `t`（毫秒）及 `c` 富文本数组，元素可能有tx/li/or。逐行尝试解析，不把整份content强行当成JSON或纯LRC。
-- offset 为毫秒。修改通过 event/report 的 lyric_offset_change，不是GET端点参数。
+- offset 为毫秒。修改通过 event/report 的 lyric_offset_change，不是GET端点参数；授权复核实测改后读回生效，并已写回原值复核。
 - source 的后端语义**未确认**。历史前端出现相互矛盾的枚举映射；样本值2/3不能可靠映射为“云端/内嵌/手工”。显示原始值或使用未知来源兜底。
 - 历史不存在trackGUID返回100005。无歌词曲目的 `{list:[],preferred:null}` 是待验证预期，不是已确认的成功样本。
 
@@ -405,13 +407,13 @@ Range: bytes=0-99
 
 | 接口 | query | 历史 data | 证据 |
 |---|---|---|---|
-| `GET /track/roam-start` | `deviceId!` | `{current:RoamItem,next:RoamItem}` | H / F |
-| `GET /track/roam-next` | `deviceId!`,`relativeRoamId!` | `{previous:RoamItem,next:RoamItem}`等相对邻项 | H / F |
-| `GET /track/roam-previous` | `deviceId!`,`relativeRoamId!` | 相对邻项；队首样本为null | H / F |
+| `GET /track/roam-start` | `deviceId!` | `{current:RoamItem,next:RoamItem}` | V（全新 deviceId 一次完整链路） |
+| `GET /track/roam-next` | `deviceId!`,`relativeRoamId!` | `{previous:RoamItem,next:RoamItem}`等相对邻项 | V |
+| `GET /track/roam-previous` | `deviceId!`,`relativeRoamId!` | 相对邻项；队首返回 `data:null`（code 0） | V |
 
 `RoamItem = {roamId,track:Track}`。使用返回的roamId作为后续relativeRoamId，不使用trackGUID替代；前端映射出的file字段不是后端返回字段。
 
-历史缺deviceId或非法relativeRoamId返回100002；相对键current/next/previous应做可选处理。只读复核为避免改变漫游状态而跳过全部3条。若只需无重复随机播放整个已取列表，也可在客户端自行洗牌。
+历史缺deviceId或非法relativeRoamId返回100002；相对键current/next/previous应做可选处理。授权复核以全新 deviceId 实测三端点：roam-previous 对队首项返回 `data:null`（整包为 null），不是错误。若只需无重复随机播放整个已取列表，也可在客户端自行洗牌。
 
 <a id="catalog"></a>
 ## 8. 专辑、艺术家与流派
@@ -489,12 +491,12 @@ suggest形态（结构示意，不表示所有组永远存在或为空）：
 | 接口 | 权限/副作用 | 请求 | data / 行为 | 证据 |
 |---|---|---|---|---|
 | `GET /favorite-track/list` | 成员 | `page?`,`size?`,`sort?` | `{list:Track[],total,sort}` | V；空/非空依账号状态 |
-| `POST /favorite-track/create` | 成员；添加收藏 | `{trackGUID}` | 历史为null；重复收藏仍code0 | H |
-| `POST /favorite-track/delete` | 成员；取消收藏 | `{trackGUID}` | 历史不存在目标也code0 | H |
+| `POST /favorite-track/create` | 成员；添加收藏 | `{trackGUID}` | `data:null`；重复收藏仍code0 | V |
+| `POST /favorite-track/delete` | 成员；取消收藏 | `{trackGUID}` | `data:null`；不存在目标也code0 | V |
 | `GET /favorite-track/purge-track-count` | 成员 | 无 | `{total:失效收藏数}` | V |
 | `POST /favorite-track/purge-track` | 成员；清理全部失效收藏 | `{}` | 历史报告清理成功；完整data模型未保留 | H |
 
-历史create不存在曲目为100005，缺trackGUID为100001；delete具幂等样本但不保证所有错误都被忽略。isFavorite用于渲染当前用户状态。只读复核没有添加/删除收藏，不能据此复测非空分页的全部语义。
+历史create不存在曲目为100005，缺trackGUID为100001；delete具幂等样本但不保证所有错误都被忽略。isFavorite用于渲染当前用户状态（授权复核中收藏/取消后读回一致）。
 
 **清理失效收藏不可视为无害探测或可完整回滚。** 不要对用户既有收藏执行purge来验证接口。
 
@@ -506,17 +508,17 @@ suggest形态（结构示意，不表示所有组永远存在或为空）：
 | 接口 | 请求 | data / 行为 | 证据 |
 |---|---|---|---|
 | `GET /play-history/list` | `page?`,`size?` | `{list:Track[],total}`，无已确认sort回显 | V；空/非空依账号状态 |
-| `POST /play-history/delete` | `{trackGUIDs:[...]}` | 删除相应曲目历史；成功data待确认 | H |
+| `POST /play-history/delete` | `{trackGUIDs:[...]}` | 删除相应曲目历史；`data:null` | V |
 
 成员使用。历史记录支持分页并按最近播放在前排列，列表元素不是额外带播放时间字段的独立History对象；空账号不能复测非空行为。
 
-删除参数是复数 **trackGUIDs数组**；历史传单数trackGUID返回100001。先上报再删除不等于恢复原有历史，不应作为现用账号的“无副作用测试”。
+删除参数是复数 **trackGUIDs数组**；历史传单数trackGUID返回100001。授权复核以临时成员实测上报→读回→删除→读回的完整链路。先上报再删除不等于恢复原有历史，不应作为现用账号的“无副作用测试”。
 
 ### 11.2 事件上报
 
 | 接口 | 请求 | 行为 | 证据 |
 |---|---|---|---|
-| `POST /event/report` | `{events:[{eventType,occurredAt,payload}]}` | 更新播放历史、歌词偏移等用户状态 | H / F；本次未执行 |
+| `POST /event/report` | `{events:[{eventType,occurredAt,payload}]}` | 更新播放历史、歌词偏移等用户状态 | V |
 
 ```json
 {
@@ -543,8 +545,8 @@ suggest形态（结构示意，不表示所有组永远存在或为空）：
 
 | eventType | 已知用途/证据 |
 |---|---|
-| track_play | 前端调用；历史观察会产生播放记录 |
-| lyric_offset_change | 前端调用；历史观察会改变歌词offset |
+| track_play | 前端调用；实测产生播放记录 |
+| lyric_offset_change | 前端调用；实测改变歌词offset并可写回 |
 | lyric_preference_change | 仅发现枚举，完整payload与生效行为未确认 |
 | sorting_change | 仅发现枚举，完整payload与生效行为未确认 |
 
@@ -560,11 +562,11 @@ suggest形态（结构示意，不表示所有组永远存在或为空）：
 | `GET /playlist/list` | 无已确认必填参数 | `{list:PlaylistBase[],total}` | V；只有1个歌单，分页未证实 |
 | `GET /playlist/detail` | `guid!`：歌单GUID | `PlaylistDetail` | V |
 | `GET /playlist/batch-detail` | `guids?`：逗号分隔GUID字符串 | `{list:PlaylistDetail[]}`；缺参为空列表 | V |
-| `POST /playlist/create` | `{name,coverId:null}` | `PlaylistBase` | H |
-| `POST /playlist/edit` | `{guid,name,coverId}` | 改名称/封面；完整data待确认 | H |
-| `POST /playlist/delete` | `{guid}` | 删除歌单；完整data待确认 | H |
-| `POST /playlist/add-track` | `{guid,trackGUIDs:[...]}` | 添加曲目；完整data待确认 | H |
-| `POST /playlist/remove-track` | `{guid,trackGUIDs:[...]}` | 移除曲目；完整data待确认 | H |
+| `POST /playlist/create` | `{name,coverId:null}` | `PlaylistBase`（不含trackCount） | V |
+| `POST /playlist/edit` | `{guid,name,coverId}` | 改名称/封面；`data:null`，读回生效 | V |
+| `POST /playlist/delete` | `{guid}` | 删除歌单；`data:null`，复查detail 100005 | V |
+| `POST /playlist/add-track` | `{guid,trackGUIDs:[...]}` | 添加曲目；`data:null`，计数读回生效 | V |
+| `POST /playlist/remove-track` | `{guid,trackGUIDs:[...]}` | 移除曲目；`data:null` | V |
 | `POST /playlist/purge-track` | `{guid}` | 清理歌单失效曲目；完整data待确认 | H |
 | `GET /playlist/purge-track-count` | `guid!` | `{total:失效曲目数}` | V |
 | `GET /track/playlist-detail/list` | `playlistGUID!`,`page?`,`size?`,`sort?` | `{list:Track[],total,sort}` | V |
@@ -572,7 +574,7 @@ suggest形态（结构示意，不表示所有组永远存在或为空）：
 ### 字段与批量查询
 
 - `PlaylistBase = {guid,name,coverId,createdAt,updatedAt}`。
-- `PlaylistDetail` 在上述字段上增加trackCount。所测 list/detail 条件性差异已确认；create不含trackCount与search含trackCount来自历史记录。
+- `PlaylistDetail` 在上述字段上增加trackCount。所测 list/detail 条件性差异已确认；create不含trackCount已实测，search含trackCount来自历史记录。
 - 前端按**每批100个GUID**拆分batch-detail；这不是已证明的服务端硬性上限。
 - list历史样本忽略page/size；歌单数较少的样本不能复证。客户端应按实际返回长度/total判断，不依赖未证实的分页。
 - playlist曲目默认sort为trackAddedAt,desc，**有回显**；不要使用前端展示层的createdAt替代此排序字段。
@@ -582,7 +584,7 @@ suggest形态（结构示意，不表示所有组永远存在或为空）：
 - create缺name/空name →100002；非字符串name →100001；重名曾返回160001。
 - edit需要name；历史只传guid和coverId返回100002。不要假定它是任意字段PATCH。
 - add/remove使用trackGUIDs数组，guid指**歌单**；关联列表用playlistGUID。
-- delete后历史detail返回100005；删除既有歌单是破坏性操作。
+- delete后复查detail返回100005（授权复核实测）；删除既有歌单是破坏性操作。
 - 上传封面与关联歌单分两步，见下一节；不要把封面上传成功当作歌单已更新。
 
 <a id="covers"></a>
@@ -606,7 +608,7 @@ coverId包含前缀，已知有 `album_`、`artist_`、`track_`、`playlist_`；
 
 ### 上传与关联（H/F）
 
-使用原生FormData时让客户端生成Content-Type及boundary，**不能JSON.stringify(FormData)**。历史参考客户端存在此问题，见第 20.3 节「实现边界」。
+使用原生FormData时让客户端生成Content-Type及boundary，**不能JSON.stringify(FormData)**。历史参考客户端存在此问题，见README的限制说明。
 
 歌单封面上传返回coverId后，用playlist/edit携带guid、name、coverId关联；曲目封面关联需要管理员track/metadata。历史无file返回100002；曲目封面普通成员返回100003。
 
@@ -615,23 +617,23 @@ coverId包含前缀，已知有 `album_`、`artist_`、`track_`、`playlist_`；
 <a id="libraries"></a>
 ## 14. 共享音乐库
 
-| 接口 | 权限/用途 | query | data / 已知行为 | 证据 |
+| 接口 | 权限 | query / body | data / 已知行为 | 证据 |
 |---|---|---|---|---|
 | `GET /shared-library/list` | 成员 | 无 | `{list:SharedLibrary[]}` | V |
 | `GET /shared-library/detail` | 成员 | `guid!` | `SharedLibrary` | V |
-| `POST /shared-library/create` | 管理员用途；新建库 | — | 成功模型与请求字段形态待确认 | H·拒绝 / F |
-| `POST /shared-library/edit` | 管理员用途；编辑库 | — | 成功模型与请求字段形态待确认 | H·参数错误 / F |
-| `POST /shared-library/delete` | 管理员用途；删除库 | — | 成功模型待确认 | H·拒绝 |
-| `POST /shared-library/scan` | 管理员用途；扫描 | — | 成功模型待确认 | H·拒绝 |
-| `POST /shared-library/scan-all` | 管理员用途；扫描全部 | — | 成功模型待确认 | H·拒绝 / F |
-| `POST /shared-library/reconnect/check` | 管理员用途 | — | 成功模型待确认 | H·拒绝 / F |
-| `POST /shared-library/reconnect` | 管理员用途；重连 | — | 成功模型待确认 | H·拒绝 / F |
+| `POST /shared-library/create` | 管理员用途 | `{path,autoDownloadLyric,metadataPreference}` | 成功模型待确认 | H·拒绝 / F |
+| `POST /shared-library/edit` | 管理员用途 | `{guid,path,autoDownloadLyric,metadataPreference}` | 成功模型待确认 | H·参数错误 / F |
+| `POST /shared-library/delete` | 管理员用途；删除库 | `{guid}` | 成功模型待确认 | H·拒绝 |
+| `POST /shared-library/scan` | 管理员用途；扫描 | `{guid}` | 成功模型待确认 | H·拒绝 |
+| `POST /shared-library/scan-all` | 管理员用途；扫描全部 | 前端无body | 成功模型待确认 | H·拒绝 / F |
+| `POST /shared-library/reconnect/check` | 管理员用途 | `{guid,path}` | 成功模型待确认 | H·拒绝 / F |
+| `POST /shared-library/reconnect` | 管理员用途；重连 | `{guid,path}` | 成功模型待确认 | H·拒绝 / F |
 
 - detail缺guid为100002，不存在为100005；读取成功不代表成员可维护库。
-- 前端create/edit请求不含name字段；读取模型可以含name（可能为空）。不要用“修改name”替代实际请求。
+- 前端create/edit形态里没有name，而读取模型可以含name（可能为空）。不要用“修改name”替代实际请求。
+- metadataPreference候选：`local_preferred`、`cloud_preferred`、`local_only`；autoDownloadLyric为布尔开关。完整必填规则未从管理员成功分支确认。
 - 历史create空body或仅name返回100001，含path后出现100003；delete/scan缺guid曾返回100001，带guid为100003。
-- reconnect/check与reconnect历史只有guid时100001，同时guid+path时100003。此观察**不能推导整个服务端的校验执行顺序**。
-- **请求字段形态刻意不收录**：这些管理写操作从未在管理员身份下验证成功，字段清单只会降低对未验证实例滥用的门槛，而不构成已证实的接口契约。
+- reconnect/check与reconnect历史只有guid时100001，同时guid+path时100003。此观察支持正确调用形态，**不能推导整个服务端的校验执行顺序**。
 - reconnect不是因为参数错误就“未实现”；也不要用真实库做重连/扫描/删除探测。
 
 <a id="folder-view"></a>
@@ -643,7 +645,7 @@ coverId包含前缀，已知有 `album_`、`artist_`、`track_`、`playlist_`；
 |---|---|---|---|---|
 | `GET /folder-view/list` | 成员 | `parentPath!`,`sort?` | `{folder:{name,path,itemCount,folders[],tracks[]},sort}` | V |
 | `POST /folder-view/playable-tracks` | 成员 | `{folderPaths:[],trackGUIDs:[]}` | `{tracks:Track[]}` | V |
-| `POST /folder-view/add-to-playlist` | 成员 | `{folderPaths:[],trackGUIDs:[],playlistGUID}` | 待确认 | F；空参数 100002 |
+| `POST /folder-view/add-to-playlist` | 成员 | `{folderPaths:[],trackGUIDs:[],playlistGUID}` | `data:null`；计数读回生效 | V（单曲GUID）；空参数 100002 |
 | `POST /folder-view/delete` | 管理员用途 | `{folderPaths:[],trackGUIDs:[]}` | 待确认 | E；成员 100003 |
 | `POST /folder-view/recover` | 管理员用途 | `{folderPaths:[],trackGUIDs:[]}` | 待确认 | E；成员 100003 |
 
@@ -666,7 +668,7 @@ coverId包含前缀，已知有 `album_`、`artist_`、`track_`、`playlist_`；
 ### 15.3 管理语义
 
 - `delete`、`recover` 对成员返回 100003（admin only），即目录删除与恢复是管理员软删除能力，与 `isAdminDeleted` 对应。
-- `add-to-playlist` 对成员开放，是正常写操作：需要 `playlistGUID`，空参 100002；是否去重、是否会写入失效曲目未验证。
+- `add-to-playlist` 对成员开放，是正常写操作：需要 `playlistGUID`，空参 100002；授权复核实测单曲加歌生效。是否去重、是否会写入失效曲目未验证。
 - 不要对真实库做删除、恢复或批量加歌单探测；这些操作无法可靠回滚。
 
 ### 15.4 与曲目列表的差异
@@ -681,19 +683,20 @@ coverId包含前缀，已知有 `album_`、`artist_`、`track_`、`playlist_`；
 
 ### 16.1 用户管理与改密
 
-| 接口 | 权限/用途 | 已知行为 | 证据 |
-|---|---|---|---|
-| `GET /user/list` | 管理员用途 | 成员100003；完整查询规则与成功模型待确认 | E |
-| `GET /user/exists` | 管理员用途 | 成员100003，参数形态按前端username；成功模型未测 | E / F |
-| `POST /user/create` | 前端管理员功能；创建用户 | 历史样本100001；请求字段形态与成功模型待确认 | F / H·参数错误 |
-| `POST /user/edit` | 前端管理员功能；编辑用户 | 历史样本100001；请求字段形态与成功模型待确认 | F / H·参数错误 |
-| `POST /user/delete` | 管理员用途；删除用户 | 历史成员100003 | H·拒绝 |
-| `POST /user/unbanned` | 管理员用途；解除禁用 | 历史成员100003 | H·拒绝 |
-| `POST /user/passwd-change` | 当前用户改密 | 登录/改密遵循SHA-256格式；历史成功，完整data待确认 | H；本次未执行 |
+| 接口 | 权限/用途 | query / body | data / 已知行为 | 证据 |
+|---|---|---|---|---|
+| `GET /user/list` | 管理员 | 无已确认必填参数 | `{list:[User]}`；成员100003 | V |
+| `GET /user/exists` | 管理员 | `username?` | `{isExist:bool}`；缺username也code 0（isExist=false）；成员100003 | V |
+| `POST /user/create` | 管理员 | `{username,password:sha256,sharedLibraryAccess:{mode,guids[]}}` | `data:null`；重名120004 | V |
+| `POST /user/edit` | 管理员 | `{guid,username,password?,sharedLibraryAccess}` | `data:null`；改名/改授权读回生效 | V |
+| `POST /user/delete` | 管理员；删除用户 | `{guid}` | `data:null`；复查exists=false | V |
+| `POST /user/unbanned` | 管理员；解除禁用 | `{guid}` | `data:null`；对未禁用用户实测无副作用 | V |
+| `POST /user/passwd-change` | 当前用户改密 | `{password:"<sha256小写hex>"}` | 历史成功；完整data待确认 | H；本次未执行 |
 
-- user/exists建议遵循前端username参数；成员无论是否传参都可能被拒，不能用100003证明参数正确。
-- user/create/edit的100001不是明确权限拒绝，不能宣称“任何body均失败”或成功请求所需字段已完备。
-- **user/create/edit的请求字段形态刻意不收录**：管理员身份从未验证成功，字段清单只会降低对未授权实例滥用的门槛。sharedLibraryAccess的形态可见模型章节中前端请求体形态的记录，仅作结构参考，不代表可用契约。
+- user/exists 的 username 可选：缺参返回 code 0 / `{isExist:false}`（授权复核实测）。
+- user/create/edit 成功契约已实测（见上表）：成功响应 `data:null`，重名 120004；历史100001样本对应残缺请求体。
+- 登录/改密遵循SHA-256格式；create/edit 同样使用 SHA-256（实测确认），不应把未知字符串直接作为明文发送。
+- sharedLibraryAccess 请求体为 `{mode,guids[]}`；User 响应中该字段为 `{mode,sharedLibraries[]}`，两者形态不同不能混用。
 - passwd-change作用于当前会话用户；历史即使附加guid也未改变目标用户。不要用它管理员式地修改他人密码。
 - 历史缺/空password为100001，纯空白字符串为120006。**不要重跑空值/错密/同值改密来“证明安全”**，这仍是敏感写操作或认证探测。
 
@@ -701,22 +704,22 @@ coverId包含前缀，已知有 `album_`、`artist_`、`track_`、`playlist_`；
 
 | 接口 | 用途/请求 | data / 权限 | 证据 |
 |---|---|---|---|
-| `GET /settings/server` | 读取服务设置 | 成员100003；管理员成功模型待确认 | E |
+| `GET /settings/server` | 管理员读取服务设置 | `{name,lang}`；成员100003 | V |
 | `POST /settings/server` | 更新设置；完整body待确认 | 历史成员100003；成功未测 | H·拒绝 / F |
-| `GET /settings/user` | 读取用户相关设置 | 成员100003；不要按路径名误判为普通用户自助设置 | E |
+| `GET /settings/user` | 管理员读取默认授权设置 | `{defaultSharedLibraryAccess:{mode,sharedLibraries[]}}`（本实例 mode=none）；成员100003 | V |
 | `POST /settings/user` | 更新用户相关设置；完整body待确认 | 历史成员100003；成功未测 | H·拒绝 / F |
 
-前端资料涉及sharedLibraryAccess，但现有证据不足以写出完整settings/user请求结构、必填字段或响应模型。此处明确留空，不拼凑其它用户接口的请求体作为保证。
+读取模型已实测（见上表）；POST 更新请求结构、必填字段仍未验证，不拼凑其它用户接口的请求体作为保证。`settings/user` 的 defaultSharedLibraryAccess 是新建用户的默认授权，create 时显式传 sharedLibraryAccess 才能覆盖。
 
 ### 16.3 授权目录
 
-| 接口 | 权限/已知行为 | 证据 |
-|---|---|---|
-| `GET /app-center/authed-dir/list` | 成员100003；成功模型待确认 | E |
-| `GET /app-center/authed-dir/sub/list` | 缺parent为100002；提供后成员100003 | E |
-| `POST /app-center/authed-dir/sub/create` | 历史成员100003；请求字段形态与成功模型待确认 | H·拒绝 |
+| 接口 | query / body | data / 权限 | 证据 |
+|---|---|---|---|
+| `GET /app-center/authed-dir/list` | 无已确认必填参数 | `{list:[AuthedDir]}`（见模型章节）；成员100003 | V |
+| `GET /app-center/authed-dir/sub/list` | `parent!`：非空父目录参数 | `{list:[{path,name}]}`；缺parent为100002；成员100003 | V（管理员） |
+| `POST /app-center/authed-dir/sub/create` | `{parent,name}` | 历史成员100003；成功模型待确认 | H·拒绝；参数来自历史探测 |
 
-parent/name不应替换为guid/path等猜测字段。目录创建是写入操作；**其请求字段形态刻意不收录**（管理员成功分支从未验证）。子目录成功列表结构、路径规范化、越界访问限制均未完成验证。
+parent/name不应替换为guid/path等猜测字段。目录创建是写入操作，成功分支未验证；读取模型已实测。条目 `path` 为服务端绝对路径，客户端不应记录或展示。
 
 <a id="tasks"></a>
 ## 17. 任务
@@ -789,14 +792,16 @@ TrackDetail指metadata.data.track；所测track/list元素不含最后两个字�
 
 releaseDate通常为yyyy-MM-dd，缺值需容错。前端读取过originalReleaseYear/originalReleaseDate，但本实例历史样本未返回。嵌入Track的Album/Artist简对象不保证具有这些独立列表的全部字段。
 
-歌单detail/batch-detail的trackCount已有证据，list没有；create不含与search含trackCount由历史记录支持。
+歌单detail/batch-detail的trackCount已有证据，list没有；create不含trackCount已实测，search含trackCount由历史记录支持。
 
 ### 18.4 用户、库、歌词与辅助模型
 
 ```text
 User = {
   guid, name, role: "member" | "admin",
-  lastAccessedAt: number | null, createdAt, updatedAt
+  lastAccessedAt: number | null, createdAt, updatedAt,
+  sharedLibraryAccess: { mode, sharedLibraries[] },
+  trimNasUserId, trimNasUsername, isBanned: boolean, bannedUntil
 }
 
 SharedLibrary = {
@@ -820,7 +825,9 @@ SysInfo = {
 }
 ```
 
-- SharedLibraryAccess来自前端请求体，不是已证明总会出现在User响应中的字段；partial时使用guids表达所选库。
+- SharedLibraryAccess 请求体为 `{mode,guids[]}`；User/settings 响应中为 `{mode,sharedLibraries[]}`（授权复核实测）。partial 请求用 guids 表达所选库。
+- User 响应还含 `trimNasUserId`、`trimNasUsername`、`isBanned`、`bannedUntil`（授权复核实测；所测实例 isBanned 均为 false）。
+- SettingsServer = `{name, lang}`；SettingsUser = `{defaultSharedLibraryAccess}`；AuthedDir = `{path,storageType,cloudStorageType,aliasName,permission,uname,address,comment,username}`（值形态未逐项验证）。
 - SharedLibrary.name样本可为空；accessStatus只观察到数值样本，完整枚举未知。
 - metadataPreference：local_preferred / cloud_preferred / local_only。
 - Lyric.source语义不确定；preferred属于lyric/list响应外层，不是单个Lyric必填字段。
@@ -851,7 +858,7 @@ SysInfo = {
 | 120001 | Unauthorized | H/F；错误密码及临时登录拒绝均曾出现，不保证具体限流阈值 |
 | 120002 | UserDisabled | F |
 | 120003 | OAuthUserAlreadyExists | F |
-| 120004 | UsernameExists | F |
+| 120004 | UsernameExists | H/F；重名创建实测触发 |
 | 120005 | InvalidUsername | F |
 | 120006 | PasswordRequired | H/F；改密纯空白password曾触发，缺/空字段样本反而为100001 |
 | 130001 | CueMissingOffset | F；无CUE样本 |
@@ -874,36 +881,49 @@ SysInfo = {
 
 前端统一 fetch 客户端通过 HTTP **header** `authx` 发送签名（不是 query 参数）；媒体直接 URL、图片以及 sendBeacon 等通路不一定发送。一次授权复核中的只读请求、登录和退出不带该 header 仍成功，携带伪造值的只读样本也成功。**不能由此保证所有路由、请求类型或未来版本都不校验，也不能证明服务端读取了伪造值。**
 
-以下是前端逆向得到的签名要素说明（F），不是经过全量签名向量验证的独立SDK，也不构成可复现算法。服务端宽松接受不能作为签名实现正确的证明。
+以下是前端逆向得到的算法说明（F），不是经过全量签名向量验证的独立SDK。服务端宽松接受不能作为签名实现正确的证明。
 
-### 20.2 构成要素（描述性，非可复现模板）
+### 20.2 构造过程
 
-本文只说明签名的**存在与构成要素**，不提供可复现的构造配方。以下为授权实例前端构建中观察到的要素，非完整算法描述：
+```text
+nonce     = 100000..999999 的随机6位十进制字符串
+timestamp = 当前毫秒时间戳字符串
+pathname  = 最终URL的pathname，包含/music/api/v1前缀，不含query
 
-| 要素 | 说明 |
-|---|---|
-| 随机数 | 一次请求使用一个随机数值，避免重放 |
-| 时间戳 | 毫秒级 |
-| pathname | 最终 URL 的 pathname，含 `/music/api/v1` 前缀，不含 query |
-| bodyHash | GET 与无 body POST 的 hash 输入来自 URL 查询串，POST JSON 来自序列化后的 body 字符串；两者编码与规范化规则不共享 |
-| 常量 | 前端构建中可读取两个公开常量，本文不复制其字面量 |
-| 传输形态 | HTTP header `authx`，取值为形如 `nonce=…&timestamp=…&sign=…` 的键值串 |
+GET:
+  从最终URL.searchParams取得查询参数（此时值已经是字符串）
+  丢弃值恰为字符串 "undefined" 或 "null" 的项；保留空字符串
+  按key字典序规范化并用URLSearchParams编码拼接
+  将结果中的 "+" 改为 "%20"
+  对裸 % 做 replace(/%(?![0-9A-Fa-f]{2})/g, "%25")
+  尝试decodeURIComponent；失败则回退到未解码的规范化原文
+  bodyHash = md5(上述payload)
+
+POST JSON:
+  bodyHash = md5(JSON.stringify(body))
+  无body时使用 md5("")
+
+sign = md5(SALT + "_" + pathname + "_" + nonce + "_" + timestamp
+           + "_" + bodyHash + "_" + API_KEY)
+authx = "nonce=" + nonce + "&timestamp=" + timestamp + "&sign=" + sign
+```
+
+前端构建中可找到两个公开常量，本文**不复制其字面量**：
 
 ```text
 SALT    = <从授权实例的前端构建读取>
 API_KEY = <从授权实例的前端构建读取>
 ```
 
-签名值为上述要素经哈希函数组合计算的结果，非明文拼接。客户端可见的常量不是用户令牌，也不能提供「客户端持有秘密」的安全保证。
-
-**为何不提供完整模板：** 从任意实例的公开前端构建中提取两个常量后，一段精确到拼接顺序与编码边界规则的完整算法描述将直接构成对未授权实例的签名伪造能力。因此本文停在要素级描述。若目标版本需要签名，应从自己获授权实例的前端构建中读取常量并自行推导完整规则，与该版本一起做兼容性验证；不要将某一构建的值当成跨版本凭据或写入公开 SDK。
+客户端可见的常量不是用户令牌，也不能提供「客户端持有秘密」的安全保证。若目标版本需要签名，应从自己获授权实例的前端构建中读取并与该版本一起做兼容性验证；不要将某一构建的值当成跨版本凭据或写入公开 SDK。
 
 ### 20.3 实现边界
 
-- 必须以**最终URL**为准；query 与 pathname 的划分应与实际发送的请求一致，不可混入。
-- 请求序列化与签名计算所用字节应保持一致，避免签名一次、发送时再用不同规则重新序列化。
-- 重复key、特殊Unicode、数组序列化及multipart的完整等价规则尚未在本文提供独立测试向量，不宜直接猜测。
-- multipart发送规则与JSON请求不同；应按实际发送的FormData原样处理，不照抄其它通路规则。
+- 必须以**最终URL**为准；内联`?a=b`也应参与query规范化，不可混入pathname。
+- URLSearchParams的值均为字符串；JavaScript对象真正的null/undefined如何转换，应在URL构造层明确决定，不能把两层规则混写。
+- 重复key、特殊Unicode、数组序列化及multipart签名的完整等价规则尚未在本文提供独立测试向量，不宜直接猜测。
+- JSON签名应与实际发送的序列化字节一致；避免签名一次、发送时再用不同规则重新序列化。
+- multipart必须原样发送FormData，不能照抄JSON bodyHash规则后宣称兼容。
 - 早期参考客户端的最终URL/参数过滤和FormData发送存在缺陷，**不作为推荐SDK**。实现时应以实际发送的最终 URL、序列化字节和 FormData 为准，不照抄历史封装。
 
 <a id="examples"></a>
@@ -987,12 +1007,14 @@ NODE
 
 ### 22.1 仍未完整验证
 
-- 管理员成功分支、跨账号资源隔离、用户禁用/授权分支。
-- 写入生命周期、上传持久化、媒体库维护、真实任务控制。
+- 跨账号资源隔离、用户禁用/授权分支（isBanned/bannedUntil 未见非空样本）。
+- 上传持久化、媒体库维护、真实任务控制。
 - OAuth及首次初始化成功流程。
-- 会话级转码、HLS回收、漫游：本文保留H/F，不标V。
-- 多歌单分页、非空收藏/历史/流派/任务、CUE、无歌词曲目等数据场景。
-- 后端隐藏接口、其它方法/前缀、WebSocket/SSE、代理差异与全部参数组合。
+- settings/*、shared-library、track/metadata、封面/艺术家/流派创建、索引重建、folder-view delete/recover 的写成功分支。
+- 多歌单分页、非空流派/任务、CUE、无歌词曲目等数据场景。
+- 后端隐藏接口、其它方法/前缀（含前端内置的 `/api/intl/v1`、`/api/v2` 线索）、WebSocket/SSE、代理差异与全部参数组合。
+
+管理员轮复核已补齐：用户管理生命周期、settings/authed-dir 读取、歌单/收藏/播放历史/事件/歌词偏移/转码会话/漫游的成功分支；详见 validation 报告。
 
 所测实例的库规模与命中数只是测试背景，不是接口上限或兼容性基线。有限成功样本不能证明所有字段必填、所有非法值被拒或所有数据集的分页行为。
 
@@ -1005,4 +1027,4 @@ NODE
 | 授权实例的一次只读复核 | 成功/错误/权限/会话分支的验证；详细证据不随本文发布 |
 | 历史观察 | 仅用于标 H/F 的未复现线索，不优先于本文的明确限定 |
 
-本文不附带请求级证据、账号、实例地址、前端常量字面量或私有脚本；签名算法以要素级描述为限（见第 20 章），未验证成功的管理类写接口不收录请求字段形态（见 14、16 章）。历史脚本可能包含凭据、Cookie 持久化和不可完整回滚的操作；示例脱敏**不代表任何本地目录已经完成脱敏**。共享项目之前应单独审计文件、临时产物与版本历史。
+本文不附带请求级证据、账号、实例地址、前端常量字面量或私有脚本。历史脚本可能包含凭据、Cookie 持久化和不可完整回滚的操作；示例脱敏**不代表任何本地目录已经完成脱敏**。共享项目之前应单独审计文件、临时产物与版本历史。
